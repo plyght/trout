@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>TroutIM</string>
+    <key>CFBundleDisplayName</key>
+    <string>Trout Input Method</string>
+    <key>CFBundleIdentifier</key>
+    <string>app.trout.inputmethod.TroutIM</string>
+    <key>CFBundleVersion</key>
+    <string>0.1.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>TroutIM</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>LSBackgroundOnly</key>
+    <true/>
+    <key>InputMethodConnectionName</key>
+    <string>Trout_1_Connection</string>
+    <key>InputMethodServerControllerClass</key>
+    <string>TroutInputController</string>
+    <key>tsInputMethodCharacterRepertoireKey</key>
+    <array>
+        <string>Latn</string>
+    </array>
+    <key>ComponentInputModeDict</key>
+    <dict>
+        <key>tsInputModeListKey</key>
+        <dict>
+            <key>app.trout.inputmethod.TroutIM.mode</key>
+            <dict>
+                <key>TISInputSourceID</key>
+                <string>app.trout.inputmethod.TroutIM.mode</string>
+                <key>TISIntendedLanguage</key>
+                <string>en</string>
+                <key>tsInputModeAlternateMenuTitleStringKey</key>
+                <string>Trout</string>
+                <key>tsInputModeCharacterRepertoireKey</key>
+                <array><string>Latn</string></array>
+                <key>tsInputModeIsVisibleKey</key>
+                <true/>
+                <key>tsInputModeKeyEquivalentKey</key>
+                <string></string>
+                <key>tsInputModeMenuIconFileKey</key>
+                <string></string>
+                <key>tsInputModePaletteIconFileKey</key>
+                <string></string>
+                <key>tsInputModePrimaryInScriptKey</key>
+                <true/>
+                <key>tsInputModeScriptKey</key>
+                <string>smRoman</string>
+            </dict>
+        </dict>
+    </dict>
+</dict>
+</plist>
