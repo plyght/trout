@@ -1,120 +1,175 @@
-# Trout
+<div align='center'>
+    <h3>trout</h3>
+    <p>local-first inline completions for macOS</p>
+    <br/>
+</div>
 
-Trout is a free, open source, local-first macOS writing assistant — an
-alternative to Cotypist. It provides fast inline text completions across
-ordinary Mac text fields. It feels like a smarter autocomplete layer, not a
-chatbot: suggestions appear while you write, you stay in control, and you can
-accept text word-by-word or all at once.
+Trout is a native macOS writing assistant that provides fast inline text completions across ordinary Mac text fields. It is designed as a smarter autocomplete layer rather than a chatbot: suggestions appear while you write, stay local by default, and can be accepted one word at a time or as a full completion.
 
-All inference runs **on-device** by default. Your words stay on your machine.
+## Features
 
-## Architecture
+- **Inline Completions**: Observes focused text fields through macOS Accessibility APIs and generates short completions from the surrounding text
+- **Word-by-Word Acceptance**: Accepts the next suggested word with `Tab`, or the full suggestion with backtick when a suggestion is visible
+- **Local Inference**: Uses `llama.cpp` with GGUF models, Metal, and Accelerate on Apple platforms when enabled
+- **Menu-Bar Agent**: Runs as a background accessory app without a Dock icon, with settings and controls available from the menu bar
+- **Input Method Bridge**: Includes an InputMethodKit bundle that can consume completion shortcuts and commit accepted text into the active app
+- **Fallback Overlay**: Displays suggestions in a lightweight AppKit overlay near the caret when text geometry is available
+- **Privacy Controls**: Keeps clipboard and screenshot context disabled unless explicitly enabled in settings
+- **Per-App Profiles**: Stores app-specific completion behavior, compatibility settings, and custom instructions
+- **Model Management**: Discovers `.gguf` models from Trout's local model folder and includes catalog metadata for recommended Qwen2.5 models
+- **Local Persistence**: Stores settings, app profiles, completion stats, and runtime state in SQLite under Application Support
 
-Trout is written in **C/C++** with a thin **Objective-C++** layer for macOS
-APIs. The GUI is built with **Dear ImGui** (Metal backend). Local inference uses
-**llama.cpp**.
-
-| Component | Language | Purpose |
-|-----------|----------|---------|
-| `trout-core` | C++17 | Settings, SQLite store, stats, completion engine, model registry, emoji, app-compat database, inference abstraction |
-| `LlamaBackend` | C++ | llama.cpp GGUF inference (Metal-accelerated) |
-| `platform/macos` | Objective-C++ | Menu-bar agent, Accessibility read/insert, CGEvent tap, transparent overlay, permissions, ImGui settings window |
-| `inputmethod` | Objective-C++ | InputMethodKit input source (`IMKInputController`) — the preferred long-term typing integration |
-
-The macOS app is a background menu-bar agent (`LSUIElement`), not a Dock app.
-
-### Data locations
-
-Everything lives under `~/Library/Application Support/app.trout.Trout`:
-
-- `trout.sqlite3` — settings, per-app profiles, stats, optional typing history
-- `models/` — your `.gguf` models
-- `trout.log` — logs (no raw user text by default)
-
-## Building
-
-Requirements: macOS 14+, Apple Silicon recommended, Xcode command line tools,
-CMake 3.21+.
+## Install
 
 ```bash
-git clone --recurse-submodules <repo-url> trout
+# From source
+git clone https://github.com/plyght/trout.git
 cd trout
+git submodule update --init --recursive
 scripts/build.sh Release
+open build/platform/macos/Trout.app
 ```
 
-Outputs:
+Trout requires macOS 14+, CMake 3.21+, a C++17 compiler, Objective-C++/AppKit toolchains, and the bundled submodules for `llama.cpp`, Dear ImGui, and nlohmann/json.
 
-- `build/platform/macos/Trout.app` — the menu-bar app
-- `build/inputmethod/TroutIM.app` — the input method bundle
-
-To build without the llama.cpp backend (uses a deterministic stub backend,
-useful for UI work):
+To build without the `llama.cpp` backend:
 
 ```bash
-scripts/build.sh Debug --no-llama
+scripts/build.sh Release --no-llama
 ```
 
-## Running
-
-1. Get a GGUF model (e.g. a small instruct model like Qwen2.5 0.5B/1.5B) and
-   place it in `~/Library/Application Support/app.trout.Trout/models/`.
-   The Model tab lists suggested downloads.
-2. Launch `Trout.app`. Grant **Accessibility** permission when prompted
-   (System Settings > Privacy & Security > Accessibility).
-3. Open **Settings** from the menu-bar fish icon, go to the **Model** tab, pick
-   your model, and click **Apply & Load Model**.
-4. Start typing in a supported text field. A ghost suggestion appears near the
-   caret.
-
-### Keys
-
-| Action | Default |
-|--------|---------|
-| Accept next word | `Tab` |
-| Accept full completion | `` ` `` (backtick) |
-| Force activate completions | `Ctrl` + `` ` `` |
-| Dismiss suggestion | `Esc` |
-
-### Optional: install the input method
-
-The CGEvent-tap path works out of the box. To use the InputMethodKit path:
+## Usage
 
 ```bash
+# Build and launch the menu-bar app
+scripts/build.sh Release
+open build/platform/macos/Trout.app
+
+# Install the input method bundle
 scripts/install-inputmethod.sh
 ```
 
-Then add **Trout** under System Settings > Keyboard > Input Sources.
+After installing the input method, open System Settings > Keyboard > Input Sources and add `Trout`.
 
-## Permissions
+Trout prompts for Accessibility permission on first launch. Completions are disabled until permission is granted because the app needs Accessibility access to read focused text fields and insert accepted suggestions.
 
-- **Accessibility** (required): read focused text fields and insert completions.
-- **Screen Recording** (optional): screenshot context and overlay placement in
-  apps that render text without exposing it to Accessibility.
+Default shortcuts:
 
-## Privacy
+```text
+Tab                 Accept next word
+`                   Accept full completion
+Ctrl+`              Force completion request
+Escape              Dismiss current suggestion
+Ctrl+Opt+Cmd+`      Toggle completions for current app
+```
 
-- All model inference runs locally. Nothing is sent off the machine in the
-  default configuration.
-- Clipboard context is **off** by default.
-- Typing-history collection is **off** by default.
-- Password and secure-input fields are ignored.
-- You can delete all collected data from the Personalization tab.
+## Models
 
-## App compatibility
+Trout looks for local GGUF models in:
 
-Trout ships a built-in compatibility database (see the Apps tab) describing how
-well known apps expose their text fields, with setup recipes for browsers like
-Arc/Dia and document apps like Google Docs.
+```text
+~/Library/Application Support/app.trout.Trout/models
+```
 
-## Status
+The model browser recognizes installed `.gguf` files in that folder. Recommended model IDs in the current catalog are:
 
-This is an early implementation covering the Phase 0/1 feature set: menu-bar
-app, permissions, model management, Accessibility-based read/insert, overlay
-suggestions, word-by-word and full acceptance, per-app enable/disable, local
-stats, basic typo suppression, emoji shortcode matching, and the InputMethodKit
-scaffold. See `prd.md` for the full roadmap.
+```text
+qwen2.5-0.5b-instruct-q4_k_m
+qwen2.5-1.5b-instruct-q4_k_m
+qwen2.5-3b-instruct-q4_k_m
+```
 
-## License
+A selected model must be present before the completion engine can produce suggestions.
 
-Open source. Bundled dependencies (Dear ImGui, llama.cpp, nlohmann/json) retain
-their own permissive licenses.
+## Configuration
+
+Runtime files are stored under:
+
+```text
+~/Library/Application Support/app.trout.Trout
+```
+
+Important files and folders:
+
+```text
+trout.sqlite3    Settings, profiles, and completion statistics
+models/          Local GGUF model files
+diagnostics/     Local diagnostics output
+trout.log        Runtime log file
+```
+
+The settings UI controls:
+
+```text
+Launch at login
+Menu bar icon visibility
+Selected model
+Global completion enablement
+Maximum completion length
+Typo suppression
+Clipboard and screenshot context
+Personalization and input collection
+Emoji suggestion preferences
+Per-app completion profiles
+Shortcut descriptors
+```
+
+Clipboard and screenshot context are separate settings and are off by default.
+
+## Architecture
+
+- `app/main.mm`: AppKit entry point, accessory activation policy, and application delegate
+- `platform/macos/AppController.*`: Service orchestration, engine lifecycle, key handling, suggestions, and acceptance flow
+- `platform/macos/Accessibility.*`: Focused text capture, caret geometry, secure-field checks, and text insertion
+- `platform/macos/EventTap.*`: Global key event tap for completion shortcuts and typing debounce
+- `platform/macos/Overlay.*`: Suggestion overlay window shown near the caret
+- `platform/macos/MenuBarController.*`: Menu-bar status item and app controls
+- `platform/macos/SettingsWindow.*`: Dear ImGui settings interface backed by Metal/AppKit
+- `platform/macos/Permissions.*`: Accessibility permission checks and prompts
+- `inputmethod/*`: InputMethodKit app bundle for shortcut handling and committed text insertion
+- `core/include/trout/*`: Portable core APIs for settings, storage, models, inference, and completion orchestration
+- `core/src/Engine.cpp`: Context-to-prompt pipeline, worker thread, cancellation, post-processing, and acceptance stats
+- `core/src/LlamaBackend.cpp`: `llama.cpp` inference backend
+- `core/src/InferenceStub.cpp`: Stub inference backend for non-llama builds
+- `core/src/Store.cpp`: SQLite-backed persistence
+- `core/src/Models.cpp`: Local GGUF discovery, model catalog, and model import helpers
+- `third_party/llama.cpp`: Local inference backend
+- `third_party/imgui`: Settings UI renderer
+- `third_party/json`: nlohmann/json headers
+
+The project is split between a portable C++ core and macOS-specific Objective-C++ adapters. The core owns settings, storage, model discovery, inference, prompt construction, suggestion post-processing, and statistics. The macOS layer owns permissions, text-field integration, overlays, menu-bar behavior, settings UI, and keyboard event handling.
+
+## Development
+
+```bash
+# Configure and build with the default Release profile
+scripts/build.sh Release
+
+# Debug build
+scripts/build.sh Debug
+
+# Configure manually
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DTROUT_WITH_LLAMA=ON -G "Unix Makefiles"
+
+# Build manually
+cmake --build build -j"$(sysctl -n hw.ncpu)"
+
+# Run
+open build/platform/macos/Trout.app
+```
+
+Useful checks:
+
+```bash
+# Clean reconfigure
+rm -rf build
+scripts/build.sh Debug
+
+# Build without local inference backend
+scripts/build.sh Debug --no-llama
+
+# Install or refresh the input method
+scripts/install-inputmethod.sh
+```
+
+Key dependencies: CMake, C++17, Objective-C++, AppKit, InputMethodKit, ApplicationServices, CoreGraphics, Carbon, Metal, MetalKit, QuartzCore, SQLite, Dear ImGui, nlohmann/json, and `llama.cpp`.
