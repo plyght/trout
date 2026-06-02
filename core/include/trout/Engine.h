@@ -63,9 +63,7 @@ public:
 
 private:
     void workerLoop();
-    std::string buildPrompt(const CompletionContext& ctx) const;
     Suggestion postProcess(const std::string& raw, uint64_t reqId) const;
-    bool suspectedTypo(const std::string& textBeforeCursor) const;
     InferenceParams paramsForLength(CompletionLength len) const;
 
     Settings* settings_;

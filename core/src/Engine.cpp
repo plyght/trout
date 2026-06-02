@@ -1,11 +1,11 @@
 #include "trout/Engine.h"
 #include "trout/Store.h"
 #include "trout/Log.h"
+#include "trout/PromptRequestFactory.h"
+#include "trout/SuggestionTextNormalizer.h"
+#include "trout/TypoSuppression.h"
 
-#include <sstream>
 #include <cctype>
-#include <cstring>
-#include <algorithm>
 
 namespace trout {
 
@@ -117,74 +117,31 @@ void Engine::workerLoop() {
         if (!backend_ || !backend_->isLoaded()) continue;
 
         auto g = settings_->global();
-        if (g.hideOnSuspectedTypo && suspectedTypo(ctx.textBeforeCursor)) {
+        if (g.hideOnSuspectedTypo && trout::suspectedTypo(ctx.textBeforeCursor)) {
             Suggestion s; s.requestId = reqId; s.typoSuppressed = true;
             std::lock_guard<std::mutex> lk(cbMutex_);
             if (callback_) callback_(s);
             continue;
         }
 
-        std::string prompt = buildPrompt(ctx);
+        std::string prompt = makePromptRequest(ctx, g, settings_->appProfile(ctx.bundleId)).prompt;
         InferenceParams ip = paramsForLength(g.maxCompletionLength);
 
         std::string raw = backend_->complete(prompt, ip, nullptr, cancelFlag_);
         if (cancelFlag_.load()) continue;          // superseded by newer request
         if (activeRequestId_.load() != reqId) continue;
 
-        Suggestion s = postProcess(raw, reqId);
+        SuggestionNormalizationRequest normalizerRequest;
+        normalizerRequest.raw = raw;
+        normalizerRequest.prompt = prompt;
+        normalizerRequest.precedingText = ctx.textBeforeCursor;
+        normalizerRequest.trailingText = ctx.textAfterCursor;
+        Suggestion s = postProcess(normalizeSuggestionText(normalizerRequest), reqId);
         if (s.fullText.empty()) continue;
 
         std::lock_guard<std::mutex> lk(cbMutex_);
         if (callback_) callback_(s);
     }
-}
-
-std::string Engine::buildPrompt(const CompletionContext& ctx) const {
-    auto g = settings_->global();
-    std::ostringstream p;
-    p << "You are an inline writing autocomplete. Continue the user's text in "
-         "their own voice. Output only the continuation, no explanations, no "
-         "quotes. Keep it short and natural.\n";
-
-    if (!g.globalCustomInstructions.empty())
-        p << "User style instructions: " << g.globalCustomInstructions << "\n";
-
-    if (auto prof = settings_->appProfile(ctx.bundleId)) {
-        if (!prof->customInstructions.empty())
-            p << "App-specific instructions: " << prof->customInstructions << "\n";
-    }
-
-    if (g.useClipboardContext && !ctx.clipboardText.empty())
-        p << "Clipboard context: " << ctx.clipboardText << "\n";
-    if (g.useScreenshotContext && !ctx.screenContext.empty())
-        p << "Screen context: " << ctx.screenContext << "\n";
-
-    p << "\nText so far:\n" << ctx.textBeforeCursor;
-    return p.str();
-}
-
-bool Engine::suspectedTypo(const std::string& textBeforeCursor) const {
-    // Lightweight heuristic for the current (last) word: flag obviously broken
-    // tokens such as long runs without vowels or 3+ repeated characters.
-    size_t end = textBeforeCursor.size();
-    while (end > 0 && std::isspace((unsigned char)textBeforeCursor[end - 1])) --end;
-    size_t start = end;
-    while (start > 0 && !std::isspace((unsigned char)textBeforeCursor[start - 1])) --start;
-    std::string word = textBeforeCursor.substr(start, end - start);
-    if (word.size() < 4) return false;
-
-    int repeat = 1, maxRepeat = 1;
-    bool hasVowel = false;
-    for (size_t i = 0; i < word.size(); ++i) {
-        char c = (char)std::tolower((unsigned char)word[i]);
-        if (std::strchr("aeiou", c)) hasVowel = true;
-        if (i > 0 && word[i] == word[i - 1]) { if (++repeat > maxRepeat) maxRepeat = repeat; }
-        else repeat = 1;
-    }
-    bool alpha = std::all_of(word.begin(), word.end(),
-                             [](unsigned char c){ return std::isalpha(c); });
-    if (!alpha) return false;
-    return (!hasVowel && word.size() >= 5) || maxRepeat >= 3;
 }
 
 Suggestion Engine::postProcess(const std::string& raw, uint64_t reqId) const {

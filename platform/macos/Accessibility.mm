@@ -18,6 +18,27 @@ static std::string cfToStd(CFStringRef s) {
     return out;
 }
 
+static bool copyStringAttribute(AXUIElementRef element, CFStringRef attribute, std::string* out) {
+    CFTypeRef value = nullptr;
+    AXError err = AXUIElementCopyAttributeValue(element, attribute, &value);
+    if (err != kAXErrorSuccess || !value) return false;
+    bool ok = CFGetTypeID(value) == CFStringGetTypeID();
+    if (ok && out) *out = cfToStd((CFStringRef)value);
+    CFRelease(value);
+    return ok;
+}
+
+static bool copySelectedTextRange(AXUIElementRef element, CFRange* out) {
+    CFTypeRef rangeRef = nullptr;
+    AXError err = AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute, &rangeRef);
+    if (err != kAXErrorSuccess || !rangeRef) return false;
+    bool ok = CFGetTypeID(rangeRef) == AXValueGetTypeID() &&
+        AXValueGetType((AXValueRef)rangeRef) == kAXValueCFRangeType &&
+        AXValueGetValue((AXValueRef)rangeRef, (AXValueType)kAXValueCFRangeType, out);
+    CFRelease(rangeRef);
+    return ok;
+}
+
 Accessibility::Accessibility() {
     systemWide_ = AXUIElementCreateSystemWide();
 }
@@ -49,47 +70,29 @@ FocusedText Accessibility::readFocused() {
     ft.bundleId = frontmostBundleId();
 
     // Role / subrole for secure-field detection.
-    CFTypeRef roleRef = nullptr;
-    AXUIElementCopyAttributeValue(el, kAXRoleAttribute, &roleRef);
-    std::string role = roleRef ? cfToStd((CFStringRef)roleRef) : "";
-    if (roleRef) CFRelease(roleRef);
+    std::string role;
+    std::string subrole;
+    copyStringAttribute(el, kAXRoleAttribute, &role);
+    copyStringAttribute(el, kAXSubroleAttribute, &subrole);
 
-    CFTypeRef subRef = nullptr;
-    AXUIElementCopyAttributeValue(el, kAXSubroleAttribute, &subRef);
-    std::string subrole = subRef ? cfToStd((CFStringRef)subRef) : "";
-    if (subRef) CFRelease(subRef);
-
-    if (subrole == "AXSecureTextField") {
+    if (role == "AXSecureTextField" || subrole == "AXSecureTextField") {
         ft.secure = true;
         CFRelease(el);
         return ft;
     }
 
-    CFTypeRef roleDescRef = nullptr;
-    AXUIElementCopyAttributeValue(el, kAXRoleDescriptionAttribute, &roleDescRef);
-    if (roleDescRef) { ft.roleDesc = cfToStd((CFStringRef)roleDescRef); CFRelease(roleDescRef); }
+    copyStringAttribute(el, kAXRoleDescriptionAttribute, &ft.roleDesc);
 
     // Value (full text).
-    CFTypeRef valueRef = nullptr;
-    AXError vErr = AXUIElementCopyAttributeValue(el, kAXValueAttribute, &valueRef);
-    if (vErr == kAXErrorSuccess && valueRef &&
-        CFGetTypeID(valueRef) == CFStringGetTypeID()) {
-        ft.value = cfToStd((CFStringRef)valueRef);
-    }
-    if (valueRef) CFRelease(valueRef);
+    bool hasValue = copyStringAttribute(el, kAXValueAttribute, &ft.value);
 
     // Selected text range (caret position).
-    CFTypeRef rangeRef = nullptr;
-    AXError rErr = AXUIElementCopyAttributeValue(el, kAXSelectedTextRangeAttribute, &rangeRef);
-    if (rErr == kAXErrorSuccess && rangeRef &&
-        CFGetTypeID(rangeRef) == AXValueGetTypeID()) {
-        CFRange r{0, 0};
-        if (AXValueGetValue((AXValueRef)rangeRef, (AXValueType)kAXValueCFRangeType, &r)) {
-            ft.selectionStart = r.location;
-            ft.selectionLength = r.length;
-        }
+    CFRange r{0, 0};
+    bool hasRange = copySelectedTextRange(el, &r);
+    if (hasRange) {
+        ft.selectionStart = r.location;
+        ft.selectionLength = r.length;
     }
-    if (rangeRef) CFRelease(rangeRef);
 
     CFRelease(el);
 
@@ -105,7 +108,7 @@ FocusedText Accessibility::readFocused() {
         ft.textBeforeCursor = ft.value;
     }
 
-    ft.valid = !ft.bundleId.empty();
+    ft.valid = !ft.bundleId.empty() && (hasValue || hasRange);
     return ft;
 }
 
@@ -130,27 +133,25 @@ bool Accessibility::caretRect(CGRect* outRect) {
     if (!el) return false;
 
     bool ok = false;
-    CFTypeRef rangeRef = nullptr;
-    if (AXUIElementCopyAttributeValue(el, kAXSelectedTextRangeAttribute, &rangeRef)
-            == kAXErrorSuccess && rangeRef) {
-        CFRange r{0, 0};
-        AXValueGetValue((AXValueRef)rangeRef, (AXValueType)kAXValueCFRangeType, &r);
+    CFRange r{0, 0};
+    if (copySelectedTextRange(el, &r)) {
         // Use a 1-char range at the caret for bounds.
         CFRange caretRange{ r.location, 1 };
         AXValueRef caretRangeVal = AXValueCreate((AXValueType)kAXValueCFRangeType, &caretRange);
         CFTypeRef boundsRef = nullptr;
         AXError bErr = AXUIElementCopyParameterizedAttributeValue(
             el, kAXBoundsForRangeParameterizedAttribute, caretRangeVal, &boundsRef);
-        if (bErr == kAXErrorSuccess && boundsRef) {
+        if (bErr == kAXErrorSuccess && boundsRef &&
+            CFGetTypeID(boundsRef) == AXValueGetTypeID() &&
+            AXValueGetType((AXValueRef)boundsRef) == kAXValueCGRectType) {
             CGRect rect{};
             if (AXValueGetValue((AXValueRef)boundsRef, (AXValueType)kAXValueCGRectType, &rect)) {
                 *outRect = rect; // top-left origin (AX/Quartz screen coords)
                 ok = true;
             }
-            CFRelease(boundsRef);
         }
+        if (boundsRef) CFRelease(boundsRef);
         if (caretRangeVal) CFRelease(caretRangeVal);
-        CFRelease(rangeRef);
     }
     CFRelease(el);
     return ok;

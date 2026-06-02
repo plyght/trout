@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <atomic>
+#include <cctype>
 
 using namespace trout;
 
@@ -40,12 +41,23 @@ using namespace trout;
     // Current suggestion state (main thread only).
     std::string _suggestionText;     // remaining (unaccepted) suggestion
     std::vector<size_t> _wordEnds;   // word boundaries within _suggestionText
+    std::string _sessionOriginalText;
+    std::string _sessionAnchorBeforeCursor;
+    std::string _sessionAnchorAfterCursor;
+    std::string _sessionBundleId;
+    std::string _pendingAnchorBeforeCursor;
+    std::string _pendingAnchorAfterCursor;
+    std::string _pendingBundleId;
+    size_t _sessionAcceptedLen;
+    uint64_t _sessionRequestId;
     uint64_t _currentRequestId;
     int _debounceToken;
 }
 
 - (instancetype)init {
     if ((self = [super init])) {
+        _sessionAcceptedLen = 0;
+        _sessionRequestId = 0;
         _currentRequestId = 0;
         _debounceToken = 0;
     }
@@ -151,7 +163,12 @@ using namespace trout;
     // Don't swallow.
     if (plainMods || flags == 0 ||
         ((flags & kCGEventFlagMaskShift) && !ctrl && !opt && !cmd)) {
-        [self dismiss];
+        if (haveSuggestion) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_MSEC)),
+                           dispatch_get_main_queue(), ^{
+                [self reconcileActiveSuggestion];
+            });
+        }
         [self scheduleCompletion];
     }
     return false;
@@ -183,6 +200,9 @@ using namespace trout;
         NSString* clip = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
         if (clip) ctx.clipboardText = std::string(clip.UTF8String);
     }
+    _pendingAnchorBeforeCursor = ft.textBeforeCursor;
+    _pendingAnchorAfterCursor = ft.textAfterCursor;
+    _pendingBundleId = ft.bundleId;
     _currentRequestId = _engine->requestCompletion(ctx);
 }
 
@@ -194,6 +214,12 @@ using namespace trout;
     if (typo || text.empty()) { [self dismiss]; return; }
     _suggestionText = text;
     _wordEnds = ends;
+    _sessionOriginalText = text;
+    _sessionAnchorBeforeCursor = _pendingAnchorBeforeCursor;
+    _sessionAnchorAfterCursor = _pendingAnchorAfterCursor;
+    _sessionBundleId = _pendingBundleId;
+    _sessionAcceptedLen = 0;
+    _sessionRequestId = rid;
     [self renderOverlay];
 }
 
@@ -209,18 +235,17 @@ using namespace trout;
     if (_suggestionText.empty()) return;
     size_t cut = _wordEnds.empty() ? _suggestionText.size() : _wordEnds.front();
     if (cut == 0 || cut > _suggestionText.size()) cut = _suggestionText.size();
+    if (!_settings->global().includeTrailingSpaceOnWordAccept) {
+        while (cut > 0 && std::isspace((unsigned char)_suggestionText[cut - 1])) --cut;
+        if (cut == 0) cut = _wordEnds.empty() ? _suggestionText.size() : _wordEnds.front();
+    }
     std::string word = _suggestionText.substr(0, cut);
 
     if (_ax->insertText(word)) {
         int chars = (int)word.size();
         _engine->recordAcceptance(1, chars, _ax->frontmostBundleId());
+        [self advanceSuggestionByBytes:cut];
     }
-
-    // Advance remaining suggestion and rebase word boundaries.
-    _suggestionText = _suggestionText.substr(cut);
-    std::vector<size_t> rebased;
-    for (size_t e : _wordEnds) if (e > cut) rebased.push_back(e - cut);
-    _wordEnds = rebased;
 
     if (_suggestionText.empty()) { [self dismiss]; }
     else { [self renderOverlay]; }
@@ -236,9 +261,44 @@ using namespace trout;
     [self dismiss];
 }
 
+- (void)advanceSuggestionByBytes:(size_t)count {
+    if (count > _suggestionText.size()) count = _suggestionText.size();
+    _suggestionText = _suggestionText.substr(count);
+    _sessionAcceptedLen += count;
+    std::vector<size_t> rebased;
+    for (size_t e : _wordEnds) if (e > count) rebased.push_back(e - count);
+    _wordEnds = rebased;
+}
+
+- (void)reconcileActiveSuggestion {
+    if (_suggestionText.empty() || ![_overlay visible]) return;
+    FocusedText ft = _ax->readFocused();
+    if (!ft.valid || ft.secure) { [self dismiss]; return; }
+    if (ft.bundleId != _sessionBundleId) { [self dismiss]; return; }
+    if (ft.textAfterCursor != _sessionAnchorAfterCursor) { [self dismiss]; return; }
+    if (ft.textBeforeCursor.rfind(_sessionAnchorBeforeCursor, 0) != 0) { [self dismiss]; return; }
+
+    std::string consumed = ft.textBeforeCursor.substr(_sessionAnchorBeforeCursor.size());
+    if (consumed.empty()) return;
+    if (_sessionOriginalText.rfind(consumed, 0) != 0) { [self dismiss]; return; }
+    if (consumed.size() < _sessionAcceptedLen) { [self dismiss]; return; }
+
+    size_t delta = consumed.size() - _sessionAcceptedLen;
+    [self advanceSuggestionByBytes:delta];
+
+    if (_suggestionText.empty()) { [self dismiss]; }
+    else { [self renderOverlay]; }
+}
+
 - (void)dismiss {
     _suggestionText.clear();
     _wordEnds.clear();
+    _sessionOriginalText.clear();
+    _sessionAnchorBeforeCursor.clear();
+    _sessionAnchorAfterCursor.clear();
+    _sessionBundleId.clear();
+    _sessionAcceptedLen = 0;
+    _sessionRequestId = 0;
     [_overlay hide];
 }
 

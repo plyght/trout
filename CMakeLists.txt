@@ -44,6 +44,9 @@ add_library(trout-core STATIC
     core/src/Compat.cpp
     core/src/Emoji.cpp
     core/src/Engine.cpp
+    core/src/PromptRequestFactory.cpp
+    core/src/SuggestionTextNormalizer.cpp
+    core/src/TypoSuppression.cpp
     core/src/InferenceStub.cpp
 )
 
@@ -71,4 +74,20 @@ endif()
 if(APPLE AND TROUT_BUILD_APP)
     add_subdirectory(platform/macos)
     add_subdirectory(inputmethod)
+endif()
+
+option(TROUT_BUILD_TESTS "Build trout unit tests" ON)
+if(TROUT_BUILD_TESTS)
+    enable_testing()
+    add_executable(prompt-request-factory-tests tests/PromptRequestFactoryTests.cpp)
+    target_link_libraries(prompt-request-factory-tests PRIVATE trout-core)
+    add_test(NAME prompt-request-factory-tests COMMAND prompt-request-factory-tests)
+
+    add_executable(suggestion-text-normalizer-tests tests/SuggestionTextNormalizerTests.cpp)
+    target_link_libraries(suggestion-text-normalizer-tests PRIVATE trout-core)
+    add_test(NAME suggestion-text-normalizer-tests COMMAND suggestion-text-normalizer-tests)
+
+    add_executable(typo-suppression-tests tests/TypoSuppressionTests.cpp)
+    target_link_libraries(typo-suppression-tests PRIVATE trout-core)
+    add_test(NAME typo-suppression-tests COMMAND typo-suppression-tests)
 endif()
